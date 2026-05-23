@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <title>Hand Gesture Control</title>
+
+  <style>
+    body{
+      margin:0;
+      overflow:hidden;
+      background:#111;
+      color:white;
+      font-family:Arial, sans-serif;
+      text-align:center;
+    }
+
+    video, canvas{
+      position:absolute;
+      width:100vw;
+      height:100vh;
+      object-fit:cover;
+      transform: scaleX(-1); /* mirror kamera depan */
+    }
+
+    #status{
+      position:absolute;
+      top:20px;
+      left:50%;
+      transform:translateX(-50%);
+      background:rgba(0,0,0,0.6);
+      padding:10px 20px;
+      border-radius:10px;
+      font-size:20px;
+      z-index:10;
+    }
+  </style>
+</head>
+<body>
+
+<div id="status">Mendeteksi tangan...</div>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<script>
+const videoElement = document.getElementById("video");
+const canvasElement = document.getElementById("canvas");
+const canvasCtx = canvasElement.getContext("2d");
+const statusText = document.getElementById("status");
+
+canvasElement.width = window.innerWidth;
+canvasElement.height = window.innerHeight;
+
+let lastGesture = "";
+let cooldown = false;
+
+// cek apakah jari terbuka
+function fingerUp(tip, pip, landmarks){
+  return landmarks[tip].y < landmarks[pip].y;
+}
+
+function detectGesture(landmarks){
+
+  const indexUp = fingerUp(8,6,landmarks);
+  const middleUp = fingerUp(12,10,landmarks);
+  const ringUp = fingerUp(16,14,landmarks);
+  const pinkyUp = fingerUp(20,18,landmarks);
+
+  // Gesture 1 → telunjuk saja
+  if(indexUp && !middleUp && !ringUp && !pinkyUp){
+    return "SELECT";
+  }
+
+  // Gesture 2 → semua jari buka
+  if(indexUp && middleUp && ringUp && pinkyUp){
+    return "PAUSE";
+  }
+
+  // Gesture 3 → kepalan
+  if(!indexUp && !middleUp && !ringUp && !pinkyUp){
+    return "STOP";
+  }
+
+  return "";
+}
+
+function triggerAction(gesture){
+
+  if(cooldown) return;
+
+  cooldown = true;
+
+  setTimeout(()=>{
+    cooldown = false;
+  },1500);
+
+  if(gesture === "SELECT"){
+    alert("SELECT berhasil!");
+    statusText.innerText = "Gesture: SELECT";
+  }
+
+  if(gesture === "PAUSE"){
+    alert("PAUSE berhasil!");
+    statusText.innerText = "Gesture: PAUSE";
+  }
+
+  if(gesture === "STOP"){
+    alert("STOP berhasil!");
+    statusText.innerText = "Gesture: STOP";
+  }
+}
+
+const hands = new Hands({
+  locateFile: (file) => {
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+  }
+});
+
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7
+});
+
+hands.onResults((results) => {
+
+  canvasCtx.save();
+  canvasCtx.clearRect(0,0,canvasElement.width,canvasElement.height);
+
+  canvasCtx.drawImage(
+    results.image,
+    0,
+    0,
+    canvasElement.width,
+    canvasElement.height
+  );
+
+  if(results.multiHandLandmarks){
+
+    for(const landmarks of results.multiHandLandmarks){
+
+      drawConnectors(
+        canvasCtx,
+        landmarks,
+        HAND_CONNECTIONS
+      );
+
+      drawLandmarks(
+        canvasCtx,
+        landmarks
+      );
+
+      const gesture = detectGesture(landmarks);
+
+      if(gesture && gesture !== lastGesture){
+        lastGesture = gesture;
+        triggerAction(gesture);
+      }
+
+      if(!gesture){
+        lastGesture = "";
+      }
+    }
+  }
+
+  canvasCtx.restore();
+});
+
+const camera = new Camera(videoElement,{
+  onFrame: async () => {
+    await hands.send({image: videoElement});
+  },
+  width: 1280,
+  height: 720,
+  facingMode: "user" // kamera depan
+});
+
+camera.start();
+</script>
+
+</body>
+</html>
