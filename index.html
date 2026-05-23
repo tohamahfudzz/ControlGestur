@@ -1,189 +1,210 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <title>Hand Gesture Control</title>
+<title>Hand Control</title>
 
-  <style>
+<style>
     body{
-      margin:0;
-      overflow:hidden;
-      background:#111;
-      color:white;
-      font-family:Arial, sans-serif;
-      text-align:center;
+        margin:0;
+        overflow:hidden;
+        background:black;
+        font-family:Arial;
     }
 
     video, canvas{
-      position:absolute;
-      width:100vw;
-      height:100vh;
-      object-fit:cover;
-      transform: scaleX(-1); /* mirror kamera depan */
+        position:absolute;
+        width:100vw;
+        height:100vh;
+        object-fit:cover;
     }
 
-    #status{
-      position:absolute;
-      top:20px;
-      left:50%;
-      transform:translateX(-50%);
-      background:rgba(0,0,0,0.6);
-      padding:10px 20px;
-      border-radius:10px;
-      font-size:20px;
-      z-index:10;
+    #info{
+        position:absolute;
+        top:20px;
+        left:50%;
+        transform:translateX(-50%);
+        z-index:10;
+
+        background:rgba(0,0,0,0.7);
+        color:white;
+        padding:12px 20px;
+        border-radius:12px;
+
+        font-size:20px;
     }
-  </style>
+</style>
 </head>
+
 <body>
 
-<div id="status">Mendeteksi tangan...</div>
+<div id="info">Arahkan tangan ke kamera</div>
 
 <video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
 
-<!-- MediaPipe -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
-const videoElement = document.getElementById("video");
-const canvasElement = document.getElementById("canvas");
-const canvasCtx = canvasElement.getContext("2d");
-const statusText = document.getElementById("status");
 
-canvasElement.width = window.innerWidth;
-canvasElement.height = window.innerHeight;
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const info = document.getElementById("info");
 
-let lastGesture = "";
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
 let cooldown = false;
+let lastGesture = "";
 
-// cek apakah jari terbuka
-function fingerUp(tip, pip, landmarks){
-  return landmarks[tip].y < landmarks[pip].y;
+// fungsi cek jari naik
+function isFingerUp(tip, pip, landmarks){
+    return landmarks[tip].y < landmarks[pip].y;
 }
 
+// deteksi gesture
 function detectGesture(landmarks){
 
-  const indexUp = fingerUp(8,6,landmarks);
-  const middleUp = fingerUp(12,10,landmarks);
-  const ringUp = fingerUp(16,14,landmarks);
-  const pinkyUp = fingerUp(20,18,landmarks);
+    const indexUp = isFingerUp(8,6,landmarks);
+    const middleUp = isFingerUp(12,10,landmarks);
+    const ringUp = isFingerUp(16,14,landmarks);
+    const pinkyUp = isFingerUp(20,18,landmarks);
 
-  // Gesture 1 → telunjuk saja
-  if(indexUp && !middleUp && !ringUp && !pinkyUp){
-    return "SELECT";
-  }
+    // telunjuk
+    if(indexUp && !middleUp && !ringUp && !pinkyUp){
+        return "SELECT";
+    }
 
-  // Gesture 2 → semua jari buka
-  if(indexUp && middleUp && ringUp && pinkyUp){
-    return "PAUSE";
-  }
+    // semua jari buka
+    if(indexUp && middleUp && ringUp && pinkyUp){
+        return "PAUSE";
+    }
 
-  // Gesture 3 → kepalan
-  if(!indexUp && !middleUp && !ringUp && !pinkyUp){
-    return "STOP";
-  }
+    // kepalan
+    if(!indexUp && !middleUp && !ringUp && !pinkyUp){
+        return "STOP";
+    }
 
-  return "";
+    return "";
 }
 
-function triggerAction(gesture){
+// aksi
+function runGesture(gesture){
 
-  if(cooldown) return;
+    if(cooldown) return;
 
-  cooldown = true;
+    cooldown = true;
 
-  setTimeout(()=>{
-    cooldown = false;
-  },1500);
+    setTimeout(()=>{
+        cooldown = false;
+    },1500);
 
-  if(gesture === "SELECT"){
-    alert("SELECT berhasil!");
-    statusText.innerText = "Gesture: SELECT";
-  }
+    if(gesture === "SELECT"){
+        info.innerText = "☝️ SELECT";
+        alert("SELECT terdeteksi");
+    }
 
-  if(gesture === "PAUSE"){
-    alert("PAUSE berhasil!");
-    statusText.innerText = "Gesture: PAUSE";
-  }
+    if(gesture === "PAUSE"){
+        info.innerText = "✋ PAUSE";
+        alert("PAUSE terdeteksi");
+    }
 
-  if(gesture === "STOP"){
-    alert("STOP berhasil!");
-    statusText.innerText = "Gesture: STOP";
-  }
+    if(gesture === "STOP"){
+        info.innerText = "✊ STOP";
+        alert("STOP terdeteksi");
+    }
 }
 
+// setup mediapipe
 const hands = new Hands({
-  locateFile: (file) => {
-    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-  }
+    locateFile: (file)=>{
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
 });
 
 hands.setOptions({
-  maxNumHands: 1,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.7,
-  minTrackingConfidence: 0.7
+    maxNumHands:1,
+    modelComplexity:1,
+    minDetectionConfidence:0.6,
+    minTrackingConfidence:0.6
 });
 
-hands.onResults((results) => {
+// hasil tracking
+hands.onResults((results)=>{
 
-  canvasCtx.save();
-  canvasCtx.clearRect(0,0,canvasElement.width,canvasElement.height);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  canvasCtx.drawImage(
-    results.image,
-    0,
-    0,
-    canvasElement.width,
-    canvasElement.height
-  );
+    ctx.drawImage(
+        results.image,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
 
-  if(results.multiHandLandmarks){
+    if(results.multiHandLandmarks){
 
-    for(const landmarks of results.multiHandLandmarks){
+        for(const landmarks of results.multiHandLandmarks){
 
-      drawConnectors(
-        canvasCtx,
-        landmarks,
-        HAND_CONNECTIONS
-      );
+            drawConnectors(
+                ctx,
+                landmarks,
+                HAND_CONNECTIONS,
+                {lineWidth:4}
+            );
 
-      drawLandmarks(
-        canvasCtx,
-        landmarks
-      );
+            drawLandmarks(
+                ctx,
+                landmarks,
+                {radius:5}
+            );
 
-      const gesture = detectGesture(landmarks);
+            const gesture = detectGesture(landmarks);
 
-      if(gesture && gesture !== lastGesture){
-        lastGesture = gesture;
-        triggerAction(gesture);
-      }
+            if(gesture && gesture !== lastGesture){
+                lastGesture = gesture;
+                runGesture(gesture);
+            }
 
-      if(!gesture){
-        lastGesture = "";
-      }
+            if(!gesture){
+                lastGesture = "";
+            }
+        }
+
+    }else{
+        info.innerText = "Tangan tidak terdeteksi";
     }
-  }
 
-  canvasCtx.restore();
 });
 
-const camera = new Camera(videoElement,{
-  onFrame: async () => {
-    await hands.send({image: videoElement});
-  },
-  width: 1280,
-  height: 720,
-  facingMode: "user" // kamera depan
+// kamera belakang
+const camera = new Camera(video,{
+
+    onFrame: async ()=>{
+        await hands.send({image: video});
+    },
+
+    width:1280,
+    height:720
+
 });
 
 camera.start();
+
+// paksa kamera belakang
+navigator.mediaDevices.getUserMedia({
+    video:{
+        facingMode:{
+            exact:"environment"
+        }
+    }
+});
+
 </script>
 
 </body>
