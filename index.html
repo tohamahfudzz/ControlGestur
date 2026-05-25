@@ -1,211 +1,260 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hand Gesture Detector</title>
 
-<title>Hand Control</title>
-
-<style>
-    body{
-        margin:0;
-        overflow:hidden;
-        background:black;
-        font-family:Arial;
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #fff;
+      text-align: center;
+      padding: 16px;
     }
 
-    video, canvas{
-        position:absolute;
-        width:100vw;
-        height:100vh;
-        object-fit:cover;
+    .wrap {
+      position: relative;
+      width: 92vw;
+      max-width: 720px;
+      margin: 0 auto;
+      aspect-ratio: 4 / 3;
+      background: #000;
+      border: 2px solid #444;
+      border-radius: 16px;
+      overflow: hidden;
     }
 
-    #info{
-        position:absolute;
-        top:20px;
-        left:50%;
-        transform:translateX(-50%);
-        z-index:10;
-
-        background:rgba(0,0,0,0.7);
-        color:white;
-        padding:12px 20px;
-        border-radius:12px;
-
-        font-size:20px;
+    video, canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+      object-fit: cover;
     }
-</style>
+
+    canvas {
+      pointer-events: none;
+    }
+
+    #status {
+      margin-top: 14px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #7CFF7C;
+      min-height: 28px;
+    }
+
+    .hint {
+      margin-top: 8px;
+      color: #bbb;
+      font-size: 14px;
+    }
+  </style>
+
+  <!-- MediaPipe Tasks Vision -->
+  <script type="module">
+    import {
+      FilesetResolver,
+      HandLandmarker,
+      DrawingUtils
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs";
+
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+
+    let handLandmarker = null;
+    let drawingUtils = null;
+
+    let lastGesture = "";
+    let lastGestureAlertTime = 0;
+    let lastMoveAlertTime = 0;
+    let prevIndexTip = null;
+    let lastVideoTime = -1;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function classifyGesture(landmarks) {
+      // 4 jari selain ibu jari:
+      const indexUp  = landmarks[8].y  < landmarks[6].y;
+      const middleUp = landmarks[12].y < landmarks[10].y;
+      const ringUp   = landmarks[16].y < landmarks[14].y;
+      const pinkyUp  = landmarks[20].y < landmarks[18].y;
+
+      const countUp = [indexUp, middleUp, ringUp, pinkyUp].filter(Boolean).length;
+
+      if (countUp === 4) return "OPEN_PALM";
+      if (countUp === 0) return "FIST";
+      if (indexUp && middleUp && !ringUp && !pinkyUp) return "PEACE";
+      if (indexUp && !middleUp && !ringUp && !pinkyUp) return "POINT";
+      return "HAND";
+    }
+
+    function maybeNotify(message, kind = "gesture") {
+      console.log(`[${kind}] ${message}`);
+      setStatus(message);
+
+      const now = Date.now();
+      const cooldown = kind === "move" ? 400 : 800;
+      const lastTime = kind === "move" ? lastMoveAlertTime : lastGestureAlertTime;
+
+      if (now - lastTime >= cooldown) {
+        if (kind === "move") lastMoveAlertTime = now;
+        else lastGestureAlertTime = now;
+
+        alert(message);
+      }
+    }
+
+    async function startCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user"
+        },
+        audio: false
+      });
+
+      video.srcObject = stream;
+      await video.play();
+    }
+
+    async function createHandLandmarker() {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      );
+
+      handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+        },
+        runningMode: "VIDEO",
+        numHands: 1,
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+    }
+
+    async function init() {
+      try {
+        setStatus("Menyalakan kamera...");
+        await startCamera();
+
+        setStatus("Memuat model tangan...");
+        await createHandLandmarker();
+
+        drawingUtils = new DrawingUtils(ctx);
+        setStatus("Siap. Tunjukkan tangan ke kamera.");
+
+        requestAnimationFrame(predictLoop);
+      } catch (err) {
+        console.error(err);
+        setStatus("Error: " + err.message);
+      }
+    }
+
+    function predictLoop() {
+      if (!handLandmarker || video.readyState < 2) {
+        requestAnimationFrame(predictLoop);
+        return;
+      }
+
+      const nowMs = performance.now();
+
+      if (video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+
+        const results = handLandmarker.detectForVideo(video, nowMs);
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        let detectedSomething = false;
+
+        if (results.landmarks && results.landmarks.length > 0) {
+          detectedSomething = true;
+
+          for (const landmarks of results.landmarks) {
+            // Gambar landmark
+            drawingUtils.drawConnectors(
+              landmarks,
+              HandLandmarker.HAND_CONNECTIONS,
+              { color: "#00FF00", lineWidth: 3 }
+            );
+            drawingUtils.drawLandmarks(
+              landmarks,
+              { color: "#FF0000", lineWidth: 2 }
+            );
+
+            // Gesture sederhana
+            const gesture = classifyGesture(landmarks);
+
+            if (gesture !== lastGesture) {
+              lastGesture = gesture;
+              if (gesture !== "HAND") {
+                maybeNotify(`Gesture terdeteksi: ${gesture}`, "gesture");
+              } else {
+                console.log("Gesture/tangan terdeteksi");
+                setStatus("Tangan terdeteksi");
+              }
+            }
+
+            // Deteksi gerakan ujung telunjuk
+            const tip = landmarks[8];
+            const x = Math.round(tip.x * canvas.width);
+            const y = Math.round(tip.y * canvas.height);
+
+            if (prevIndexTip) {
+              const dx = x - prevIndexTip.x;
+              const dy = y - prevIndexTip.y;
+              const dist = Math.hypot(dx, dy);
+
+              if (dist > 28) {
+                maybeNotify(
+                  `Jari bergerak (${Math.round(dist)} px)`,
+                  "move"
+                );
+              }
+            }
+
+            prevIndexTip = { x, y };
+          }
+        }
+
+        if (!detectedSomething) {
+          lastGesture = "";
+          prevIndexTip = null;
+          setStatus("Tidak ada tangan terdeteksi");
+        }
+      }
+
+      requestAnimationFrame(predictLoop);
+    }
+
+    init();
+  </script>
 </head>
-
 <body>
+  <h1>Hand Gesture Detector</h1>
 
-<div id="info">Arahkan tangan ke kamera</div>
+  <div class="wrap">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+  </div>
 
-<video id="video" autoplay playsinline></video>
-<canvas id="canvas"></canvas>
-
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-
-<script>
-
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const info = document.getElementById("info");
-
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-
-let cooldown = false;
-let lastGesture = "";
-
-// fungsi cek jari naik
-function isFingerUp(tip, pip, landmarks){
-    return landmarks[tip].y < landmarks[pip].y;
-}
-
-// deteksi gesture
-function detectGesture(landmarks){
-
-    const indexUp = isFingerUp(8,6,landmarks);
-    const middleUp = isFingerUp(12,10,landmarks);
-    const ringUp = isFingerUp(16,14,landmarks);
-    const pinkyUp = isFingerUp(20,18,landmarks);
-
-    // telunjuk
-    if(indexUp && !middleUp && !ringUp && !pinkyUp){
-        return "SELECT";
-    }
-
-    // semua jari buka
-    if(indexUp && middleUp && ringUp && pinkyUp){
-        return "PAUSE";
-    }
-
-    // kepalan
-    if(!indexUp && !middleUp && !ringUp && !pinkyUp){
-        return "STOP";
-    }
-
-    return "";
-}
-
-// aksi
-function runGesture(gesture){
-
-    if(cooldown) return;
-
-    cooldown = true;
-
-    setTimeout(()=>{
-        cooldown = false;
-    },1500);
-
-    if(gesture === "SELECT"){
-        info.innerText = "☝️ SELECT";
-        alert("SELECT terdeteksi");
-    }
-
-    if(gesture === "PAUSE"){
-        info.innerText = "✋ PAUSE";
-        alert("PAUSE terdeteksi");
-    }
-
-    if(gesture === "STOP"){
-        info.innerText = "✊ STOP";
-        alert("STOP terdeteksi");
-    }
-}
-
-// setup mediapipe
-const hands = new Hands({
-    locateFile: (file)=>{
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-    }
-});
-
-hands.setOptions({
-    maxNumHands:1,
-    modelComplexity:1,
-    minDetectionConfidence:0.6,
-    minTrackingConfidence:0.6
-});
-
-// hasil tracking
-hands.onResults((results)=>{
-
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-
-    ctx.drawImage(
-        results.image,
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-
-    if(results.multiHandLandmarks){
-
-        for(const landmarks of results.multiHandLandmarks){
-
-            drawConnectors(
-                ctx,
-                landmarks,
-                HAND_CONNECTIONS,
-                {lineWidth:4}
-            );
-
-            drawLandmarks(
-                ctx,
-                landmarks,
-                {radius:5}
-            );
-
-            const gesture = detectGesture(landmarks);
-
-            if(gesture && gesture !== lastGesture){
-                lastGesture = gesture;
-                runGesture(gesture);
-            }
-
-            if(!gesture){
-                lastGesture = "";
-            }
-        }
-
-    }else{
-        info.innerText = "Tangan tidak terdeteksi";
-    }
-
-});
-
-// kamera belakang
-const camera = new Camera(video,{
-
-    onFrame: async ()=>{
-        await hands.send({image: video});
-    },
-
-    width:1280,
-    height:720
-
-});
-
-camera.start();
-
-// paksa kamera belakang
-navigator.mediaDevices.getUserMedia({
-    video:{
-        facingMode:{
-            exact:"environment"
-        }
-    }
-});
-
-</script>
-
+  <div id="status">Loading...</div>
+  <div class="hint">
+    Coba buka telapak, kepal, tanda peace, atau gerakkan jari telunjuk.
+  </div>
 </body>
 </html>
